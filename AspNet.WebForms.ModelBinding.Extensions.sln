@@ -1,0 +1,33 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 2012
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AspNet.WebForms.ModelBinding.Extensions", "src\AspNet.WebForms.ModelBinding.Extensions\AspNet.WebForms.ModelBinding.Extensions.csproj", "{5A202B5D-6839-4C91-B670-B7D608D4E1BD}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AspNet.WebForms.ModelBinding.Extensions.Samples", "samples\AspNet.WebForms.ModelBinding.Extensions.Samples\AspNet.WebForms.ModelBinding.Extensions.Samples.csproj", "{D49B8777-140C-4BAC-9AAA-423A9C7F7EDA}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = ".nuget", ".nuget", "{96828E84-BA18-414C-B3C1-61EC3B2DA8F3}"
+	ProjectSection(SolutionItems) = preProject
+		.nuget\NuGet.Config = .nuget\NuGet.Config
+		.nuget\NuGet.exe = .nuget\NuGet.exe
+		.nuget\NuGet.targets = .nuget\NuGet.targets
+	EndProjectSection
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{5A202B5D-6839-4C91-B670-B7D608D4E1BD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5A202B5D-6839-4C91-B670-B7D608D4E1BD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5A202B5D-6839-4C91-B670-B7D608D4E1BD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5A202B5D-6839-4C91-B670-B7D608D4E1BD}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D49B8777-140C-4BAC-9AAA-423A9C7F7EDA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D49B8777-140C-4BAC-9AAA-423A9C7F7EDA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D49B8777-140C-4BAC-9AAA-423A9C7F7EDA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D49B8777-140C-4BAC-9AAA-423A9C7F7EDA}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal
