@@ -1,11 +1,13 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Data.Entity;
 using System.Linq;
 using System.Web;
 using System.Web.Optimization;
 using System.Web.Routing;
 using System.Web.Security;
 using AspNet.WebForms.ModelBinding.Extensions.Samples;
+using AspNet.WebForms.ModelBinding.Extensions.Samples.Model;
 
 namespace AspNet.WebForms.ModelBinding.Extensions.Samples
 {
@@ -13,6 +15,8 @@ namespace AspNet.WebForms.ModelBinding.Extensions.Samples
     {
         void Application_Start(object sender, EventArgs e)
         {
+            Database.SetInitializer<NorthwindContext>(new NorthwindContextDbInitializer());
+
             // Code that runs on application startup
             BundleConfig.RegisterBundles(BundleTable.Bundles);
             AuthConfig.RegisterOpenAuth();

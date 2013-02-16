@@ -17,6 +17,7 @@ namespace AspNet.WebForms.ModelBinding.Extensions.Samples
         protected void Page_Init(object sender, EventArgs e)
         {
             productsList.EnableModelBindingExtensions();
+            productsList.Sort("ID", SortDirection.Ascending);
         }
 
         // The return type can be changed to IEnumerable, however to support
@@ -25,14 +26,22 @@ namespace AspNet.WebForms.ModelBinding.Extensions.Samples
         //     int startRowIndex
         //     out int totalRowCount
         //     string sortByExpression
-        public IQueryable<Product> productsList_GetData()
+        public async Task<SelectResult> GetCategoriesAsync(int maximumRows, int startRowIndex, string sortByExpression)
         {
-            return _db.Products;
+            return new SelectResult
+            {
+                TotalRowCount = await _db.Categories.CountAsync(),
+                Results = await _db.Categories
+                    .SortBy(sortByExpression)
+                    .Skip(startRowIndex)
+                    .Take(maximumRows)
+                    .ToListAsync()
+            };
         }
 
-        private async Task<int> GetCount(IQueryable<Product> query)
+        public IEnumerable<Category> GetCategories()
         {
-            return await query.CountAsync();
+            return _db.Categories.ToList();
         }
     }
 }

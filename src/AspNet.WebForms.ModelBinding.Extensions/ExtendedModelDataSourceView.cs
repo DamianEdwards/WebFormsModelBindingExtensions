@@ -1,9 +1,10 @@
 ﻿using System;
 using System.Collections;
-using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.Linq;
+using System.Reflection;
 using System.Threading.Tasks;
+using System.Web.Compilation;
 using System.Web.UI;
 using System.Web.UI.WebControls;
 
@@ -11,6 +12,7 @@ namespace AspNet.WebForms.ModelBinding.Extensions
 {
     public class ExtendedModelDataSourceView : ModelDataSourceView
     {
+        private bool _isAsyncSelect = false;
         private readonly ExtendedModelDataSource _owner;
 
         public ExtendedModelDataSourceView(ExtendedModelDataSource owner)
@@ -18,36 +20,6 @@ namespace AspNet.WebForms.ModelBinding.Extensions
         {
             _owner = owner;
         }
-
-        //protected override IEnumerable ExecuteSelect(DataSourceSelectArguments arguments)
-        //{
-        //    // TODO: Make this work
-        //    return Execute<IEnumerable>(DataSourceOperation.Select, null);
-        //}
-
-        //protected override int ExecuteInsert(IDictionary values)
-        //{
-        //    IDictionary paramaters = new OrderedDictionary(StringComparer.OrdinalIgnoreCase);
-        //    MergeDictionaries(values, paramaters);
-        //    return Execute<int>(DataSourceOperation.Insert, paramaters);
-        //}
-
-        //protected override int ExecuteUpdate(IDictionary keys, IDictionary values, IDictionary oldValues)
-        //{
-        //    IDictionary paramaters = new OrderedDictionary(StringComparer.OrdinalIgnoreCase);
-        //    MergeDictionaries(oldValues, paramaters);
-        //    MergeDictionaries(keys, paramaters);
-        //    MergeDictionaries(values, paramaters);
-        //    return Execute<int>(DataSourceOperation.Update, paramaters);
-        //}
-
-        //protected override int ExecuteDelete(IDictionary keys, IDictionary oldValues)
-        //{
-        //    IDictionary paramaters = new OrderedDictionary(StringComparer.OrdinalIgnoreCase);
-        //    MergeDictionaries(keys, paramaters);
-        //    MergeDictionaries(oldValues, paramaters);
-        //    return Execute<int>(DataSourceOperation.Delete, paramaters);
-        //}
 
         // Call tree:
         //   Select
@@ -62,216 +34,151 @@ namespace AspNet.WebForms.ModelBinding.Extensions
         {
             var method = FindMethod(SelectMethod);
 
-            // Check if the method returns a Task<>
+            // Check if the method returns a Task<SelectResult<T>>
             Type taskReturnType;
-            if (_owner.IsAsync && InheritsFromGenericTask(method.MethodInfo.ReturnType, out taskReturnType))
+            if (_owner.IsAsync && InheritsFromGenericTask(method.MethodInfo.ReturnType, out taskReturnType)
+                && typeof(SelectResult).IsAssignableFrom(taskReturnType))
             {
-                // Method returns a Task<>, we can run it async!
-                SelectAsync(arguments, callback, taskReturnType);
+                _isAsyncSelect = true;
+
+                DataSourceSelectResultProcessingOptions selectResultProcessingOptions = null;
+                ModelDataSourceMethod modelMethod = EvaluateSelectMethodParameters(arguments, out selectResultProcessingOptions);
+
+                ModelDataMethodResult result = InvokeMethod(modelMethod);
+                var pageAsyncTask = new PageAsyncTask(async () =>
+                {
+                    var task = result.ReturnValue as Task<SelectResult>;
+                    var selectResult = await task;
+                    if (arguments.RetrieveTotalRowCount)
+                    {
+                        if (!selectResult.TotalRowCount.HasValue)
+                        {
+                            throw new InvalidOperationException("");
+                        }
+                        arguments.TotalRowCount = selectResult.TotalRowCount.Value;
+                    }
+                    var data = CreateSelectResult(selectResult.Results);
+                    
+                    callback(data);
+                });
+                _owner.DataControl.Page.RegisterAsyncTask(pageAsyncTask);
             }
             else
             {
                 base.Select(arguments, callback);
             }
-            // TODO: Detect if method returns a Task but page is not async and throw?
         }
 
-        //public override void Insert(IDictionary values, DataSourceViewOperationCallback callback)
-        //{
-        //    var method = FindMethod(InsertMethod);
-        //    var returnType = method.MethodInfo.ReturnType;
-        //    // Method must return a Task<>
-        //    if (typeof(Task).IsAssignableFrom(returnType) && _owner.IsAsync)
-        //    {
-        //        // Method returns a Task<>, we can run it!
-        //        var page = _owner.DataControl.Page;
-        //        var task = new PageAsyncTask(async () =>
-        //        {
-        //            var methodTask = GetInsertMethodResult(values) as Task;
-        //            await methodTask;
-        //            // Validate the returned result
-        //            var result = ((dynamic)methodTask).Result;
-
-        //        });
-        //        page.RegisterAsyncTask(task);
-        //    }
-        //    else
-        //    {
-        //        base.Insert(values, callback);
-        //    }
-        //}
-
-        //public override void Delete(IDictionary keys, IDictionary oldValues, DataSourceViewOperationCallback callback)
-        //{
-        //    var method = FindMethod(DeleteMethod);
-        //    var returnType = method.MethodInfo.ReturnType;
-        //    // Method must return a Task<>
-        //    if (typeof(Task).IsAssignableFrom(returnType) && _owner.IsAsync)
-        //    {
-        //        // Method returns a Task<>, we can run it!
-        //        var page = _owner.DataControl.Page;
-        //        var task = new PageAsyncTask(async () =>
-        //        {
-        //            var methodTask = GetDeleteMethodResult(keys, oldValues) as Task;
-        //            await methodTask;
-        //            // Validate the returned result
-        //            var result = ((dynamic)methodTask).Result;
-
-        //        });
-        //        page.RegisterAsyncTask(task);
-        //    }
-        //    else
-        //    {
-        //        base.Delete(keys, oldValues, callback);
-        //    }
-        //}
-
-        //public override void Update(IDictionary keys, IDictionary values, IDictionary oldValues, DataSourceViewOperationCallback callback)
-        //{
-        //    var method = FindMethod(UpdateMethod);
-        //    var returnType = method.MethodInfo.ReturnType;
-        //    // Method must return a Task<>
-        //    Type taskReturnType;
-        //    if (_owner.IsAsync)
-        //    {
-        //        // Method returns a Task<>, we can run it!
-        //        var page = _owner.DataControl.Page;
-        //        var task = new PageAsyncTask(async () =>
-        //        {
-        //            var methodTask = GetUpdateMethodResult(keys, values, oldValues) as Task;
-        //            await methodTask;
-        //            // Validate the returned result
-        //            var result = ((dynamic)methodTask).Result;
-
-        //        });
-        //        page.RegisterAsyncTask(task);
-        //    }
-        //    else
-        //    {
-        //        base.Update(keys, values, oldValues, callback);
-        //    }
-        //}
-
-        protected override object GetSelectMethodResult(DataSourceSelectArguments arguments)
+        protected override ModelDataSourceMethod EvaluateSelectMethodParameters(DataSourceSelectArguments arguments, out DataSourceSelectResultProcessingOptions selectResultProcessingOptions)
         {
-            if (SelectMethod.Length == 0)
+            if (!_isAsyncSelect)
             {
-                throw new InvalidOperationException("ModelDataSourceView_SelectNotSupported");
+                return base.EvaluateSelectMethodParameters(arguments, out selectResultProcessingOptions);
             }
-            DataSourceSelectResultProcessingOptions selectResultProcessingOptions = null;
-            ModelDataSourceMethod method = EvaluateSelectMethodParameters(arguments, out selectResultProcessingOptions);
-            ModelDataMethodResult result = InvokeMethod(method);
-            return this.ProcessSelectMethodResult(arguments, selectResultProcessingOptions, result);
+
+            IOrderedDictionary controlValues = MergeSelectParameters(arguments);
+            ModelDataSourceMethod modelDataSourceMethod = this.FindMethod(this.SelectMethod);
+            Type returnType = modelDataSourceMethod.MethodInfo.ReturnType;
+            Type modelType = this.ModelType;
+            if (modelType == null)
+            {
+                foreach (Type type3 in returnType.GetGenericArguments())
+                {
+                    if (typeof(IQueryable<>).MakeGenericType(new Type[] { type3 }).IsAssignableFrom(returnType))
+                    {
+                        modelType = type3;
+                    }
+                }
+            }
+            Type type4 = (modelType != null) ? typeof(IQueryable<>).MakeGenericType(new Type[] { modelType }) : null;
+            bool isReturningQueryable = (type4 != null) && type4.IsAssignableFrom(returnType);
+            bool flag2 = false;
+            bool flag3 = false;
+            if ((arguments.StartRowIndex >= 0) && (arguments.MaximumRows > 0))
+            {
+                flag2 = IsAutoPagingRequired(modelDataSourceMethod.MethodInfo, isReturningQueryable, _isAsyncSelect);
+            }
+            if (!string.IsNullOrEmpty(arguments.SortExpression))
+            {
+                flag3 = IsAutoSortingRequired(modelDataSourceMethod.MethodInfo, isReturningQueryable);
+            }
+            selectResultProcessingOptions = new DataSourceSelectResultProcessingOptions { ModelType = modelType, AutoPage = flag2, AutoSort = flag3 };
+            this.EvaluateMethodParameters(DataSourceOperation.Select, modelDataSourceMethod, controlValues);
+            return modelDataSourceMethod;
         }
 
-        private void SelectAsync(DataSourceSelectArguments arguments, DataSourceViewSelectCallback callback, Type taskReturnType)
+        private static IOrderedDictionary MergeSelectParameters(DataSourceSelectArguments arguments)
         {
-            var method = FindMethod(SelectMethod);
-
-            // Execute pre-method filters
-            //var filters = GetDataMethodFilters(method);
-            //MethodExecutingContext methodExecutingContext = ProcessDataMethodExecutingFilters(method, filters, DataSourceOperation.Select);
-            
-            var pageAsyncTask = new PageAsyncTask(async () =>
+            bool flag = (arguments.StartRowIndex >= 0) && (arguments.MaximumRows > 0);
+            bool flag2 = !string.IsNullOrEmpty(arguments.SortExpression);
+            IOrderedDictionary destination = new OrderedDictionary(StringComparer.OrdinalIgnoreCase);
+            if (flag2)
             {
-                Exception selectException = null;
-                IEnumerable selectResult = null;
-                try
-                {
-                    var selectTask = GetSelectMethodResult(arguments) as Task;
-                    await selectTask;
-
-                    object result = ((dynamic)selectTask).Result;
-                    selectResult = CreateSelectResult(result);
-                }
-                catch (Exception ex)
-                {
-                    selectException = ex;
-                }
-
-                // Excute post-method filters
-                //MethodExecutedContext methodExecutedContext = ProcessDataMethodExecutedFilters(filters, DataSourceOperation.Select, selectException, selectResult);
-                if (selectException != null //&& !methodExecutedContext.ExceptionHandled
-                    )
-                {
-                    throw selectException;
-                }
-
-                //if (methodExecutedContext.Result != null && !(methodExecutedContext.Result is IEnumerable))
-                //{
-                //    throw new InvalidOperationException("Select method result must be an IEnumerable");
-                //}
-
-                //callback((IEnumerable)methodExecutedContext.Result);
-                callback(selectResult);
-            });
-
-            _owner.DataControl.Page.RegisterAsyncTask(pageAsyncTask);
+                destination["sortByExpression"] = arguments.SortExpression;
+            }
+            if (flag)
+            {
+                IDictionary source = new OrderedDictionary(StringComparer.OrdinalIgnoreCase);
+                source["maximumRows"] = arguments.MaximumRows;
+                source["startRowIndex"] = arguments.StartRowIndex;
+                source["totalRowCount"] = 0;
+                MergeDictionaries(source, destination);
+            }
+            return destination;
         }
 
-        private TResult Execute<TResult>(DataSourceOperation operation, IDictionary parameters)
+        private static bool IsAutoPagingRequired(MethodInfo selectMethod, bool isReturningQueryable, bool isAsyncSelect)
         {
-            var method = FindMethod(operation);
-            EvaluateMethodParameters(operation, method, parameters);
-            var filters = GetDataMethodFilters(method);
-
-            MethodExecutingContext methodExecutingContext = ProcessDataMethodExecutingFilters(method, filters, operation);
-            if (methodExecutingContext.Result != null)
+            bool hasMaximumRowsParamater = false;
+            bool hasTotalRowCountOutParameter = false;
+            bool hasStartRowIndexParameter = false;
+            foreach (ParameterInfo info in selectMethod.GetParameters())
             {
-                if (methodExecutingContext.Result is TResult)
+                string name = info.Name;
+                if (string.Equals("startRowIndex", name, StringComparison.OrdinalIgnoreCase))
                 {
-                    return (TResult)methodExecutingContext.Result;
+                    if (info.ParameterType.IsAssignableFrom(typeof(int)))
+                    {
+                        hasStartRowIndexParameter = true;
+                    }
                 }
-                throw new InvalidOperationException(String.Format("{0} method result must be of type {1}", operation, typeof(TResult).Name));
+                else if (string.Equals("maximumRows", name, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (info.ParameterType.IsAssignableFrom(typeof(int)))
+                    {
+                        hasMaximumRowsParamater = true;
+                    }
+                }
+                else if ((string.Equals("totalRowCount", name, StringComparison.OrdinalIgnoreCase) && info.IsOut) && typeof(int).IsAssignableFrom(info.ParameterType.GetElementType()))
+                {
+                    hasTotalRowCountOutParameter = true;
+                }
             }
-
-            method.Parameters.Clear();
-            foreach (var parameter in methodExecutingContext.Parameters)
+            bool hasAllPagingParameters = hasMaximumRowsParamater && hasStartRowIndexParameter && hasTotalRowCountOutParameter;
+            if ((!isAsyncSelect && !isReturningQueryable && !hasAllPagingParameters)
+                || (isAsyncSelect && !(hasStartRowIndexParameter && hasMaximumRowsParamater)))
             {
-                method.Parameters.Add(parameter.Key, parameter.Value);
+                throw new InvalidOperationException("ModelDataSourceView_InvalidPagingParameters");
             }
-
-            TResult result = default(TResult);
-            Exception methodException = null;
-            try
-            {
-                var returnValue = InvokeMethod(method).ReturnValue;
-                result = returnValue != null ? (TResult)returnValue : default(TResult);
-            }
-            catch (Exception ex)
-            {
-                methodException = ex;
-            }
-
-            MethodExecutedContext methodExecutedContext = ProcessDataMethodExecutedFilters(filters, operation, methodException, result);
-
-            if (methodException != null && !methodExecutedContext.ExceptionHandled)
-            {
-                throw methodException;
-            }
-
-            if (methodExecutedContext.Result != null && !(methodExecutedContext.Result is TResult))
-            {
-                throw new InvalidOperationException(String.Format("{0} method result must be of type {1}", operation, typeof(TResult).Name));
-            }
-
-            return (TResult)methodExecutedContext.Result;
+            return !hasAllPagingParameters;
         }
 
-        private ModelDataSourceMethod FindMethod(DataSourceOperation operation)
+        private static bool IsAutoSortingRequired(MethodInfo selectMethod, bool isReturningQueryable)
         {
-            switch (operation)
+            bool flag = false;
+            foreach (ParameterInfo info in selectMethod.GetParameters())
             {
-                case DataSourceOperation.Insert:
-                    return FindMethod(InsertMethod);
-                case DataSourceOperation.Update:
-                    return FindMethod(UpdateMethod);
-                case DataSourceOperation.Delete:
-                    return FindMethod(DeleteMethod);
-                case DataSourceOperation.Select:
-                default:
-                    return FindMethod(SelectMethod);
+                string name = info.Name;
+                if (string.Equals("sortByExpression", name, StringComparison.OrdinalIgnoreCase) && info.ParameterType.IsAssignableFrom(typeof(string)))
+                {
+                    flag = true;
+                }
             }
+            if (!isReturningQueryable && !flag)
+            {
+                throw new InvalidOperationException("ModelDataSourceView_InvalidSortingParameters");
+            }
+            return !flag;
         }
 
         private static void MergeDictionaries(IDictionary source, IDictionary destination)
@@ -284,6 +191,19 @@ namespace AspNet.WebForms.ModelBinding.Extensions
                     string key = (string)entry.Key;
                     destination[key] = obj2;
                 }
+            }
+        }
+
+        private Type ModelType
+        {
+            get
+            {
+                string modelTypeName = this.ModelTypeName;
+                if (string.IsNullOrEmpty(modelTypeName))
+                {
+                    return null;
+                }
+                return BuildManager.GetType(modelTypeName, true, true);
             }
         }
 
@@ -303,44 +223,6 @@ namespace AspNet.WebForms.ModelBinding.Extensions
                 baseType = baseType.BaseType;
             }
             return result;
-        }
-
-        private IEnumerable<IDataMethodFilter> GetDataMethodFilters(ModelDataSourceMethod method)
-        {
-            var filters = method.MethodInfo.GetCustomAttributes(typeof(IDataMethodFilter), false);
-            return filters.Cast<IDataMethodFilter>() ?? Enumerable.Empty<IDataMethodFilter>();
-        }
-
-        private MethodExecutingContext ProcessDataMethodExecutingFilters(ModelDataSourceMethod method, IEnumerable<IDataMethodFilter> filters, DataSourceOperation operation)
-        {
-            var methodExecutingContext = new MethodExecutingContext { DataControl = _owner.DataControl, Operation = operation };
-            foreach (DictionaryEntry entry in method.Parameters)
-            {
-                methodExecutingContext.Parameters.Add((string)entry.Key, entry.Value);
-            }
-            foreach (var filter in filters)
-            {
-                filter.OnMethodExecuting(methodExecutingContext);
-            }
-            return methodExecutingContext;
-        }
-
-        private MethodExecutedContext ProcessDataMethodExecutedFilters(IEnumerable<IDataMethodFilter> filters, DataSourceOperation operation, Exception exception, object result)
-        {
-            var methodExecutedContext = new MethodExecutedContext
-            {
-                DataControl = _owner.DataControl,
-                Operation = operation,
-                Exception = exception,
-                ExceptionHandled = exception == null,
-                Result = result
-            };
-
-            foreach (var filter in filters)
-            {
-                filter.OnMethodExecuted(methodExecutedContext);
-            }
-            return methodExecutedContext;
         }
     }
 }
