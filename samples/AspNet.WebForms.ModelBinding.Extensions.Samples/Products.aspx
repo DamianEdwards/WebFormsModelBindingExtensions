@@ -1,24 +1,25 @@
-﻿<%@ Page Title="Home Page" Async="true" Language="C#" MasterPageFile="~/Site.Master" AutoEventWireup="true" CodeBehind="Default.aspx.cs" Inherits="AspNet.WebForms.ModelBinding.Extensions.Samples._Default" %>
+﻿<%@ Page Title="Products" Async="true" Language="C#" MasterPageFile="~/Site.Master" AutoEventWireup="true" CodeBehind="Products.aspx.cs" Inherits="AspNet.WebForms.ModelBinding.Extensions.Samples.Products" %>
 
-<asp:Content runat="server" ID="BodyContent" ContentPlaceHolderID="MainContent">
-    <h2>Categories</h2>
+<asp:Content ContentPlaceHolderID="MainContent" runat="server">
+    <h2>Products</h2>
 
     <asp:ListView runat="server" ID="productsList"
-        ItemType="AspNet.WebForms.ModelBinding.Extensions.Samples.Model.Category" DataKeyNames="ID"
-        SelectMethod="GetCategoriesAsync"
-        DeleteMethod="DeleteCategoryAsync">
+        ItemType="AspNet.WebForms.ModelBinding.Extensions.Samples.Model.Product" DataKeyNames="ID"
+        SelectMethod="GetProductsAsync"
+        DeleteMethod="DeleteProductAsync">
         <LayoutTemplate>
             <table>
                 <thead>
                     <tr>
                         <th><asp:LinkButton runat="server" CommandName="Sort" CommandArgument="ID">ID</asp:LinkButton></th>
                         <th><asp:LinkButton runat="server" CommandName="Sort" CommandArgument="Name">Name</asp:LinkButton></th>
-                        <th>Products</th>
+                        <th>Category</th>
+                        <th>&nbsp;</th>
                     </tr>
                 </thead>
                 <tfoot>
                     <tr>
-                        <td colspan="3">
+                        <td colspan="4">
                             <asp:DataPager runat="server" PageSize="5" QueryStringField="page">
                                 <Fields><asp:NumericPagerField /></Fields>
                             </asp:DataPager>
@@ -32,9 +33,8 @@
         </LayoutTemplate>
         <ItemTemplate>
             <tr>
-                <td><%#: Item.ID %></td>
-                <td><%#: Item.Name %></td>
-                <td><asp:HyperLink runat="server" NavigateUrl='<%#: ResolveUrl("~/Products.aspx?categoryId=" + Item.ID) %>'><%#: Item.Products.Count %></asp:HyperLink></td>
+                <td><%#: Item.ID %></td><td><%#: Item.Name %></td><td><%#: Item.Category.Name %></td>
+                <td><asp:LinkButton runat="server" CommandName="Delete" CommandArgument="<%# Item.ID %>">delete</asp:LinkButton></td>
             </tr>
         </ItemTemplate>
     </asp:ListView>

@@ -50,13 +50,5 @@ namespace AspNet.WebForms.ModelBinding.Extensions.Samples
                     .ToListAsync()
             };
         }
-
-        public async Task<int> DeleteCategoryAsync(int id)
-        {
-            _db.Categories.Remove(
-                _db.Categories.Attach(
-                    new Category { ID = id }));
-            return await _db.SaveChangesAsync();
-        }
     }
 }

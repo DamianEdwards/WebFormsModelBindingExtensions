@@ -15,6 +15,7 @@ namespace AspNet.WebForms.ModelBinding.Extensions
     {
         private readonly ExtendedModelDataSource _owner;
         private bool _isAsyncSelect = false;
+        private bool _viewOperationInProgress = false;
 
         public ExtendedModelDataSourceView(ExtendedModelDataSource owner)
             : base(owner)
@@ -34,6 +35,14 @@ namespace AspNet.WebForms.ModelBinding.Extensions
 
         public override void Select(DataSourceSelectArguments arguments, DataSourceViewSelectCallback callback)
         {
+            if (_viewOperationInProgress)
+            {
+                // There appears to be a race somewhere in the model binding or data control base
+                // so we have to ensure we don't honor any call to select if a view operation
+                // (insert, update, delete) is still in progress as it results odd exceptions.
+                return;
+            }
+
             var method = FindMethod(SelectMethod);
 
             if (InheritsFromTask<SelectResult>(method.MethodInfo.ReturnType))
@@ -87,6 +96,8 @@ namespace AspNet.WebForms.ModelBinding.Extensions
                 throw new ArgumentNullException("callback");
             }
 
+            _viewOperationInProgress = true;
+
             if (typeof(Task).IsAssignableFrom(FindMethod(DeleteMethod).MethodInfo.ReturnType))
             {
                 ViewOperationAsync(() => (Task)GetDeleteMethodResult(keys, oldValues), callback);
@@ -139,7 +150,7 @@ namespace AspNet.WebForms.ModelBinding.Extensions
             {
                 var operationTask = asyncViewOperation();
                 var operationTaskInt = operationTask as Task<int>;
-                var insertThrew = false;
+                var operationThrew = false;
                 var affectedRecords = 0;
                 try
                 {
@@ -151,7 +162,7 @@ namespace AspNet.WebForms.ModelBinding.Extensions
                 }
                 catch (Exception ex)
                 {
-                    insertThrew = true;
+                    operationThrew = true;
                     if (!callback(affectedRecords, ex))
                     {
                         // Nobody handled the operation error so re-throw
@@ -160,12 +171,18 @@ namespace AspNet.WebForms.ModelBinding.Extensions
                 }
                 finally
                 {
-                    if (!insertThrew)
+                    _viewOperationInProgress = false;
+
+                    if (!operationThrew)
                     {
-                        if (_owner.DataControl.Page.ModelState.IsValid)
-                        {
-                            OnDataSourceViewChanged(EventArgs.Empty);
-                        }
+                        // The following line is technically meant to be called, but this causes an exception deep in ListView for some reason,
+                        // but it appears to automatically rebind anyway even without this call, so leaving commented out.
+                        //if (_owner.DataControl.Page.ModelState.IsValid)
+                        //{
+                        //    OnDataSourceViewChanged(EventArgs.Empty);
+                        //}
+
+                        // Success
                         callback(affectedRecords, null);
                     }
                 }
