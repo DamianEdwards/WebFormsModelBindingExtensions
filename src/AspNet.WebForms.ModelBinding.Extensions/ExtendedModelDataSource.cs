@@ -10,14 +10,7 @@ namespace AspNet.WebForms.ModelBinding.Extensions
         public ExtendedModelDataSource(Control dataControl)
             : base(dataControl)
         {
-            PerformAsyncDataAccess = true;
-        }
-
-        public virtual bool PerformAsyncDataAccess { get; set; }
-
-        public bool IsAsync
-        {
-            get { return PerformAsyncDataAccess && DataControl.Page.IsAsync; }
+            
         }
 
         public override ModelDataSourceView View

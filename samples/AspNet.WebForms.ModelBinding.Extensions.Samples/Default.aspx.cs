@@ -14,34 +14,49 @@ namespace AspNet.WebForms.ModelBinding.Extensions.Samples
     {
         private readonly NorthwindContext _db = new NorthwindContext();
 
-        protected void Page_Init(object sender, EventArgs e)
+        protected void Page_Init()
         {
             productsList.EnableModelBindingExtensions();
-            productsList.Sort("ID", SortDirection.Ascending);
         }
 
-        // The return type can be changed to IEnumerable, however to support
-        // paging and sorting, the following parameters must be added:
-        //     int maximumRows
-        //     int startRowIndex
-        //     out int totalRowCount
-        //     string sortByExpression
+        #region << Sync >>
+
+        public IQueryable<Category> GetCategoriesQueryable()
+        {
+            return _db.Categories.Include(c => c.Products.Count).SortBy("Name");
+        }
+
+        public IEnumerable<Category> GetCategories(int maximumRows, int startRowIndex, string sortByExpression, out int totalRowCount)
+        {
+            totalRowCount = _db.Categories.Count();
+            return _db.Categories.Include(c => c.Products)
+                .SortBy(sortByExpression ?? "Name")
+                .Skip(startRowIndex)
+                .Take(maximumRows)
+                .ToList();
+        }
+
+        #endregion
+
         public async Task<SelectResult> GetCategoriesAsync(int maximumRows, int startRowIndex, string sortByExpression)
         {
             return new SelectResult
             {
                 TotalRowCount = await _db.Categories.CountAsync(),
-                Results = await _db.Categories
-                    .SortBy(sortByExpression)
+                Results = await _db.Categories.Include(c => c.Products)
+                    .SortBy(sortByExpression ?? "Name")
                     .Skip(startRowIndex)
                     .Take(maximumRows)
                     .ToListAsync()
             };
         }
 
-        public IEnumerable<Category> GetCategories()
+        public async Task<int> DeleteCategoryAsync(int id)
         {
-            return _db.Categories.ToList();
+            _db.Categories.Remove(
+                _db.Categories.Attach(
+                    new Category { ID = id }));
+            return await _db.SaveChangesAsync();
         }
     }
 }

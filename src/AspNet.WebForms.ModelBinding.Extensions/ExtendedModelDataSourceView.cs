@@ -7,13 +7,14 @@ using System.Threading.Tasks;
 using System.Web.Compilation;
 using System.Web.UI;
 using System.Web.UI.WebControls;
+using AspNet.WebForms.ModelBinding.Extensions.Properties;
 
 namespace AspNet.WebForms.ModelBinding.Extensions
 {
     public class ExtendedModelDataSourceView : ModelDataSourceView
     {
-        private bool _isAsyncSelect = false;
         private readonly ExtendedModelDataSource _owner;
+        private bool _isAsyncSelect = false;
 
         public ExtendedModelDataSourceView(ExtendedModelDataSource owner)
             : base(owner)
@@ -21,47 +22,23 @@ namespace AspNet.WebForms.ModelBinding.Extensions
             _owner = owner;
         }
 
-        // Call tree:
-        //   Select
-        //   - ExecuteSelect
-        //     - GetSelectMethodResult
-        //       - EvaluateSelectMethodParamaters
-        //       - InvokeMethod
-        //       - ProcessSelectMethodResult
-        //     - CreateSelectResult
+        // Select call tree:
+        // DataBoundControl.PerformSelect
+        //   DataSourceView.Select
+        //     ExecuteSelect
+        //       GetSelectMethodResult
+        //         EvaluateSelectMethodParamaters
+        //         InvokeMethod
+        //         ProcessSelectMethodResult
+        //       CreateSelectResult
 
         public override void Select(DataSourceSelectArguments arguments, DataSourceViewSelectCallback callback)
         {
             var method = FindMethod(SelectMethod);
 
-            // Check if the method returns a Task<SelectResult<T>>
-            Type taskReturnType;
-            if (_owner.IsAsync && InheritsFromGenericTask(method.MethodInfo.ReturnType, out taskReturnType)
-                && typeof(SelectResult).IsAssignableFrom(taskReturnType))
+            if (InheritsFromTask<SelectResult>(method.MethodInfo.ReturnType))
             {
-                _isAsyncSelect = true;
-
-                DataSourceSelectResultProcessingOptions selectResultProcessingOptions = null;
-                ModelDataSourceMethod modelMethod = EvaluateSelectMethodParameters(arguments, out selectResultProcessingOptions);
-
-                ModelDataMethodResult result = InvokeMethod(modelMethod);
-                var pageAsyncTask = new PageAsyncTask(async () =>
-                {
-                    var task = result.ReturnValue as Task<SelectResult>;
-                    var selectResult = await task;
-                    if (arguments.RetrieveTotalRowCount)
-                    {
-                        if (!selectResult.TotalRowCount.HasValue)
-                        {
-                            throw new InvalidOperationException("");
-                        }
-                        arguments.TotalRowCount = selectResult.TotalRowCount.Value;
-                    }
-                    var data = CreateSelectResult(selectResult.Results);
-                    
-                    callback(data);
-                });
-                _owner.DataControl.Page.RegisterAsyncTask(pageAsyncTask);
+                SelectAsync(arguments, callback);
             }
             else
             {
@@ -69,54 +46,181 @@ namespace AspNet.WebForms.ModelBinding.Extensions
             }
         }
 
+        public override void Insert(IDictionary values, DataSourceViewOperationCallback callback)
+        {
+            if (callback == null)
+            {
+                throw new ArgumentNullException("callback");
+            }
+
+            if (typeof(Task).IsAssignableFrom(FindMethod(InsertMethod).MethodInfo.ReturnType))
+            {
+                ViewOperationAsync(() => (Task)GetInsertMethodResult(values), callback);
+            }
+            else
+            {
+                base.Insert(values, callback);
+            }
+        }
+
+        public override void Update(IDictionary keys, IDictionary values, IDictionary oldValues, DataSourceViewOperationCallback callback)
+        {
+            if (callback == null)
+            {
+                throw new ArgumentNullException("callback");
+            }
+
+            if (typeof(Task).IsAssignableFrom(FindMethod(UpdateMethod).MethodInfo.ReturnType))
+            {
+                ViewOperationAsync(() => (Task)GetUpdateMethodResult(keys, values, oldValues), callback);
+            }
+            else
+            {
+                base.Update(keys, values, oldValues, callback);
+            }
+        }
+
+        public override void Delete(IDictionary keys, IDictionary oldValues, DataSourceViewOperationCallback callback)
+        {
+            if (callback == null)
+            {
+                throw new ArgumentNullException("callback");
+            }
+
+            if (typeof(Task).IsAssignableFrom(FindMethod(DeleteMethod).MethodInfo.ReturnType))
+            {
+                ViewOperationAsync(() => (Task)GetDeleteMethodResult(keys, oldValues), callback);
+            }
+            else
+            {
+                base.Delete(keys, oldValues, callback);
+            }
+        }
+
+        protected void SelectAsync(DataSourceSelectArguments arguments, DataSourceViewSelectCallback callback)
+        {
+            if (!_owner.DataControl.Page.IsAsync)
+            {
+                throw new InvalidOperationException(Resources.ExtendedModelDataSourceView_MustBeAsyncPage);
+            }
+
+            _isAsyncSelect = true;
+
+            DataSourceSelectResultProcessingOptions selectResultProcessingOptions = null;
+            ModelDataSourceMethod modelMethod = EvaluateSelectMethodParameters(arguments, out selectResultProcessingOptions);
+            ModelDataMethodResult result = InvokeMethod(modelMethod);
+
+            _owner.DataControl.Page.RegisterAsyncTask(new PageAsyncTask(async () =>
+            {
+                var selectResult = await (Task<SelectResult>)result.ReturnValue;
+                if (arguments.RetrieveTotalRowCount)
+                {
+                    if (!selectResult.TotalRowCount.HasValue)
+                    {
+                        throw new InvalidOperationException(Resources.ExtendedModelDataSourceView_TotalRowCountNotSet);
+                    }
+                    arguments.TotalRowCount = selectResult.TotalRowCount.Value;
+                }
+
+                _isAsyncSelect = false;
+
+                callback(CreateSelectResult(selectResult.Results));
+            }));
+        }
+
+        protected void ViewOperationAsync(Func<Task> asyncViewOperation, DataSourceViewOperationCallback callback)
+        {
+            if (!_owner.DataControl.Page.IsAsync)
+            {
+                throw new InvalidOperationException(Resources.ExtendedModelDataSourceView_MustBeAsyncPage);
+            }
+
+            _owner.DataControl.Page.RegisterAsyncTask(new PageAsyncTask(async () =>
+            {
+                var operationTask = asyncViewOperation();
+                var operationTaskInt = operationTask as Task<int>;
+                var insertThrew = false;
+                var affectedRecords = 0;
+                try
+                {
+                    await operationTask;
+                    if (operationTaskInt != null)
+                    {
+                        affectedRecords = operationTaskInt.Result;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    insertThrew = true;
+                    if (!callback(affectedRecords, ex))
+                    {
+                        // Nobody handled the operation error so re-throw
+                        throw;
+                    }
+                }
+                finally
+                {
+                    if (!insertThrew)
+                    {
+                        if (_owner.DataControl.Page.ModelState.IsValid)
+                        {
+                            OnDataSourceViewChanged(EventArgs.Empty);
+                        }
+                        callback(affectedRecords, null);
+                    }
+                }
+            }));
+        }
+
         protected override ModelDataSourceMethod EvaluateSelectMethodParameters(DataSourceSelectArguments arguments, out DataSourceSelectResultProcessingOptions selectResultProcessingOptions)
         {
             if (!_isAsyncSelect)
             {
+                // Not doing async so just delegate to the base
                 return base.EvaluateSelectMethodParameters(arguments, out selectResultProcessingOptions);
             }
 
             IOrderedDictionary controlValues = MergeSelectParameters(arguments);
-            ModelDataSourceMethod modelDataSourceMethod = this.FindMethod(this.SelectMethod);
+            ModelDataSourceMethod modelDataSourceMethod = FindMethod(this.SelectMethod);
             Type returnType = modelDataSourceMethod.MethodInfo.ReturnType;
-            Type modelType = this.ModelType;
+            Type modelType = ModelType;
             if (modelType == null)
             {
-                foreach (Type type3 in returnType.GetGenericArguments())
+                foreach (var genericTypeArg in returnType.GetGenericArguments())
                 {
-                    if (typeof(IQueryable<>).MakeGenericType(new Type[] { type3 }).IsAssignableFrom(returnType))
+                    if (typeof(IQueryable<>).MakeGenericType(genericTypeArg).IsAssignableFrom(returnType))
                     {
-                        modelType = type3;
+                        modelType = genericTypeArg;
                     }
                 }
             }
-            Type type4 = (modelType != null) ? typeof(IQueryable<>).MakeGenericType(new Type[] { modelType }) : null;
-            bool isReturningQueryable = (type4 != null) && type4.IsAssignableFrom(returnType);
-            bool flag2 = false;
-            bool flag3 = false;
+            var queryableModelType = (modelType != null) ? typeof(IQueryable<>).MakeGenericType(modelType) : null;
+            var isReturningQueryable = (queryableModelType != null) && queryableModelType.IsAssignableFrom(returnType);
+            var autoPage = false;
+            var autoSort = false;
             if ((arguments.StartRowIndex >= 0) && (arguments.MaximumRows > 0))
             {
-                flag2 = IsAutoPagingRequired(modelDataSourceMethod.MethodInfo, isReturningQueryable, _isAsyncSelect);
+                autoPage = IsAutoPagingRequired(modelDataSourceMethod.MethodInfo, isReturningQueryable, _isAsyncSelect);
             }
-            if (!string.IsNullOrEmpty(arguments.SortExpression))
+            if (!String.IsNullOrEmpty(arguments.SortExpression))
             {
-                flag3 = IsAutoSortingRequired(modelDataSourceMethod.MethodInfo, isReturningQueryable);
+                autoSort = IsAutoSortingRequired(modelDataSourceMethod.MethodInfo, isReturningQueryable);
             }
-            selectResultProcessingOptions = new DataSourceSelectResultProcessingOptions { ModelType = modelType, AutoPage = flag2, AutoSort = flag3 };
-            this.EvaluateMethodParameters(DataSourceOperation.Select, modelDataSourceMethod, controlValues);
+            selectResultProcessingOptions = new DataSourceSelectResultProcessingOptions { ModelType = modelType, AutoPage = autoPage, AutoSort = autoSort };
+            EvaluateMethodParameters(DataSourceOperation.Select, modelDataSourceMethod, controlValues);
             return modelDataSourceMethod;
         }
 
         private static IOrderedDictionary MergeSelectParameters(DataSourceSelectArguments arguments)
         {
-            bool flag = (arguments.StartRowIndex >= 0) && (arguments.MaximumRows > 0);
-            bool flag2 = !string.IsNullOrEmpty(arguments.SortExpression);
+            var hasPaging = (arguments.StartRowIndex >= 0) && (arguments.MaximumRows > 0);
+            var hasSortExpression = !String.IsNullOrEmpty(arguments.SortExpression);
             IOrderedDictionary destination = new OrderedDictionary(StringComparer.OrdinalIgnoreCase);
-            if (flag2)
+            if (hasSortExpression)
             {
                 destination["sortByExpression"] = arguments.SortExpression;
             }
-            if (flag)
+            if (hasPaging)
             {
                 IDictionary source = new OrderedDictionary(StringComparer.OrdinalIgnoreCase);
                 source["maximumRows"] = arguments.MaximumRows;
@@ -129,56 +233,60 @@ namespace AspNet.WebForms.ModelBinding.Extensions
 
         private static bool IsAutoPagingRequired(MethodInfo selectMethod, bool isReturningQueryable, bool isAsyncSelect)
         {
-            bool hasMaximumRowsParamater = false;
-            bool hasTotalRowCountOutParameter = false;
-            bool hasStartRowIndexParameter = false;
+            var hasMaximumRowsParamater = false;
+            var hasTotalRowCountOutParameter = false;
+            var hasStartRowIndexParameter = false;
+
             foreach (ParameterInfo info in selectMethod.GetParameters())
             {
-                string name = info.Name;
-                if (string.Equals("startRowIndex", name, StringComparison.OrdinalIgnoreCase))
+                var name = info.Name;
+                if (String.Equals("startRowIndex", name, StringComparison.OrdinalIgnoreCase))
                 {
-                    if (info.ParameterType.IsAssignableFrom(typeof(int)))
+                    if (info.ParameterType.IsAssignableFrom(typeof(Int32)))
                     {
                         hasStartRowIndexParameter = true;
                     }
                 }
-                else if (string.Equals("maximumRows", name, StringComparison.OrdinalIgnoreCase))
+                else if (String.Equals("maximumRows", name, StringComparison.OrdinalIgnoreCase))
                 {
-                    if (info.ParameterType.IsAssignableFrom(typeof(int)))
+                    if (info.ParameterType.IsAssignableFrom(typeof(Int32)))
                     {
                         hasMaximumRowsParamater = true;
                     }
                 }
-                else if ((string.Equals("totalRowCount", name, StringComparison.OrdinalIgnoreCase) && info.IsOut) && typeof(int).IsAssignableFrom(info.ParameterType.GetElementType()))
+                else if ((String.Equals("totalRowCount", name, StringComparison.OrdinalIgnoreCase) && info.IsOut) && typeof(Int32).IsAssignableFrom(info.ParameterType.GetElementType()))
                 {
                     hasTotalRowCountOutParameter = true;
                 }
             }
-            bool hasAllPagingParameters = hasMaximumRowsParamater && hasStartRowIndexParameter && hasTotalRowCountOutParameter;
+
+            var hasAllPagingParameters = hasMaximumRowsParamater && hasStartRowIndexParameter && hasTotalRowCountOutParameter;
+
             if ((!isAsyncSelect && !isReturningQueryable && !hasAllPagingParameters)
                 || (isAsyncSelect && !(hasStartRowIndexParameter && hasMaximumRowsParamater)))
             {
-                throw new InvalidOperationException("ModelDataSourceView_InvalidPagingParameters");
+                throw new InvalidOperationException(SR.GetString("ModelDataSourceView_InvalidPagingParameters"));
             }
+
             return !hasAllPagingParameters;
         }
 
         private static bool IsAutoSortingRequired(MethodInfo selectMethod, bool isReturningQueryable)
         {
-            bool flag = false;
+            bool hasSortByExpressionParameter = false;
             foreach (ParameterInfo info in selectMethod.GetParameters())
             {
                 string name = info.Name;
                 if (string.Equals("sortByExpression", name, StringComparison.OrdinalIgnoreCase) && info.ParameterType.IsAssignableFrom(typeof(string)))
                 {
-                    flag = true;
+                    hasSortByExpressionParameter = true;
                 }
             }
-            if (!isReturningQueryable && !flag)
+            if (!isReturningQueryable && !hasSortByExpressionParameter)
             {
-                throw new InvalidOperationException("ModelDataSourceView_InvalidSortingParameters");
+                throw new InvalidOperationException(SR.GetString("ModelDataSourceView_InvalidSortingParameters"));
             }
-            return !flag;
+            return !hasSortByExpressionParameter;
         }
 
         private static void MergeDictionaries(IDictionary source, IDictionary destination)
@@ -187,9 +295,9 @@ namespace AspNet.WebForms.ModelBinding.Extensions
             {
                 foreach (DictionaryEntry entry in source)
                 {
-                    object obj2 = entry.Value;
-                    string key = (string)entry.Key;
-                    destination[key] = obj2;
+                    var key = (string)entry.Key;
+                    var value = entry.Value;
+                    destination[key] = value;
                 }
             }
         }
@@ -198,13 +306,19 @@ namespace AspNet.WebForms.ModelBinding.Extensions
         {
             get
             {
-                string modelTypeName = this.ModelTypeName;
-                if (string.IsNullOrEmpty(modelTypeName))
+                var modelTypeName = ModelTypeName;
+                if (String.IsNullOrEmpty(modelTypeName))
                 {
                     return null;
                 }
                 return BuildManager.GetType(modelTypeName, true, true);
             }
+        }
+
+        private static bool InheritsFromTask<T>(Type type)
+        {
+            Type genericTypeArgument;
+            return InheritsFromGenericTask(type, out genericTypeArgument) && typeof(T).IsAssignableFrom(genericTypeArgument);
         }
 
         private static bool InheritsFromGenericTask(Type type, out Type genericTypeArgument)
